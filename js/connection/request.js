@@ -326,7 +326,50 @@ export const request = (method, path) => {
                 Object.keys(defaultJSON).forEach((k) => req.headers.delete(k));
             }
 
-            return baseFetch(new URL(path, document.body.getAttribute('data-url'))).then((res) => {
+            let baseUrl = document.body.getAttribute('data-url');
+            let targetUrl;
+
+            if (baseUrl && baseUrl.includes('script.google.com')) {
+                // Clear headers to avoid preflight CORS check
+                req.headers = new Headers();
+
+                let urlObj = new URL(baseUrl);
+                let action = '';
+
+                if (path.startsWith('/api/v2/comment')) {
+                    action = 'getComments';
+                } else if (path.startsWith('/api/v2/config')) {
+                    action = 'getConfig';
+                } else if (path === '/api/comment' || path.startsWith('/api/comment?')) {
+                    action = 'postComment';
+                } else if (req.method === 'POST' && path.startsWith('/api/comment/')) {
+                    action = 'likeComment';
+                    let commentUuid = path.split('/').pop();
+                    urlObj.searchParams.set('comment_uuid', commentUuid);
+                } else if (req.method === 'PATCH' && path.startsWith('/api/comment/')) {
+                    action = 'unlikeComment';
+                    let likeUuid = path.split('/').pop();
+                    urlObj.searchParams.set('like_uuid', likeUuid);
+                    // Google Apps Script only supports GET and POST, so change PATCH to POST
+                    req.method = 'POST';
+                }
+
+                urlObj.searchParams.set('action', action);
+
+                // Copy query parameters from path (like per, next, lang)
+                if (path.includes('?')) {
+                    let pathParams = new URLSearchParams(path.split('?')[1]);
+                    pathParams.forEach((val, key) => {
+                        urlObj.searchParams.set(key, val);
+                    });
+                }
+
+                targetUrl = urlObj.toString();
+            } else {
+                targetUrl = new URL(path, baseUrl);
+            }
+
+            return baseFetch(targetUrl).then((res) => {
                 if (downName && res.ok) {
                     return baseDownload(res).then((r) => ({
                         code: r.status,
@@ -347,7 +390,7 @@ export const request = (method, path) => {
                         json.data = transform(json.data);
                     }
 
-                    return Object.assign(json, { code: res.status });
+                    return Object.assign(json, { code: json.code ?? res.status });
                 });
             }).catch((err) => {
                 if (err.name === ERROR_ABORT) {
